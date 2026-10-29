@@ -1,4 +1,4 @@
-"""Claims tools chay tren AWS Lambda, dat sau AgentCore Gateway (phan 2 - Policy)."""
+"""Claims tools on AWS Lambda, behind AgentCore Gateway (Part 2 - Policy)."""
 import json
 
 POLICIES = {
@@ -51,7 +51,7 @@ TOOLS = {"get_policy": get_policy, "get_claim_status": get_claim_status, "submit
 
 def handler(event, context):
     full_name = context.client_context.custom["bedrockAgentCoreToolName"]
-    tool_name = full_name.split("___", 1)[-1]          # bo tien to "<target>___"
+    tool_name = full_name.split("___", 1)[-1]          # strip the "<target>___" prefix
     print(json.dumps({"tool": tool_name, "input": event}))
     fn = TOOLS.get(tool_name)
     if not fn:

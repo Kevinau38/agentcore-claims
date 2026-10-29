@@ -1,4 +1,4 @@
-// Cho phep agent tra cuu hop dong va trang thai claim
+// Allow the agent to look up policies and claim status
 permit(
   principal,
   action in [

@@ -10,9 +10,9 @@ from model.load import load_model
 app = BedrockAgentCoreApp()
 log = app.logger
 
-# Phan 2: tool khong con nam trong code agent. Agent goi tool qua AgentCore Gateway (MCP),
-# Gateway hoi Policy Engine (Cedar) truoc khi cho phep goi Lambda.
-GATEWAY_URL_ENV = "AGENTCORE_GATEWAY_CLAIMSGATEWAY_URL"   # CLI tu bom bien nay vao Runtime khi deploy
+# Part 2: the tools are no longer in the agent code. The agent calls them through AgentCore Gateway (MCP),
+# and the Gateway asks the Policy Engine (Cedar) before allowing the Lambda call.
+GATEWAY_URL_ENV = "AGENTCORE_GATEWAY_CLAIMSGATEWAY_URL"   # injected into the Runtime by the CLI at deploy time
 
 
 def get_gateway_client():
