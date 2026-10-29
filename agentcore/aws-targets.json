@@ -1,1 +1,8 @@
-[]
+[
+  {
+    "name": "default",
+    "description": "Default target (us-east-1). setup_claims_demo.py fills in your account ID.",
+    "account": "000000000000",
+    "region": "us-east-1"
+  }
+]

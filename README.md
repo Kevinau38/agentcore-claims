@@ -1,108 +1,141 @@
-# AgentCore Project
+# Claims Agent: Amazon Bedrock AgentCore Observability, Policy, Registry
 
-This project was created with the [AgentCore CLI](https://github.com/aws/agentcore-cli).
+A hands-on demo of three Amazon Bedrock AgentCore capabilities, built on one insurance claims agent:
 
-## Project Structure
+| Part | Service | What the demo shows |
+|---|---|---|
+| 1 | **AgentCore Observability** | Every session, trace and span of the agent in CloudWatch GenAI Observability, with no instrumentation code. The trace reveals the agent submitting a 50,000 USD claim on a policy capped at 5,000 USD. |
+| 2 | **AgentCore Policy** | Tools moved behind AgentCore Gateway and guarded by Cedar policies: default deny, a `permit` for claims up to 10,000 USD, and a `forbid` rule generated from a plain-English sentence ("forbid wins"). Every denial is visible in the trace. |
+| 3 | **AWS Agent Registry** | The tools (MCP record) and the agent (Custom record) published to a private registry, with the Publisher → Admin approval → Consumer search flow. Records are not discoverable until approved. |
+
+## The agent
+
+- **Claims Agent**, an insurance assistant written with [Strands Agents](https://strandsagents.com), model Claude Haiku 4.5 on Amazon Bedrock.
+- Runs on **AgentCore Runtime** (`us-east-1`), deployed with the AgentCore CLI (CodeZip build, no Docker).
+- Three tools on mock data: `get_policy`, `get_claim_status`, `submit_claim`.
+
+Mock data: `POL-1001` (auto, limit 5,000 USD), `POL-1002` (home, 20,000 USD), `POL-1003` (expired).
+
+## Architecture (after Part 2)
 
 ```
-my-project/
-├── AGENTS.md               # AI coding assistant context
-├── agentcore/
-│   ├── agentcore.json      # Project config (agents, memories, credentials, gateways, evaluators)
-│   ├── aws-targets.json    # Deployment targets (account + region)
-│   ├── .env.local          # Secrets — API keys (gitignored)
-│   ├── .llm-context/       # TypeScript type definitions for AI assistants
-│   │   ├── agentcore.ts    # AgentCoreProjectSpec types
-│   │   └── aws-targets.ts  # Deployment target types
-│   └── cdk/                # CDK infrastructure (@aws/agentcore-cdk)
-├── app/                    # Agent application code
-└── evaluators/             # Custom evaluator code (if any)
+Customer ──> AgentCore Runtime (Claims Agent, Strands + Claude Haiku 4.5)
+                 │  MCP, SigV4
+                 ▼
+             AgentCore Gateway (ClaimsGateway) ── Policy Engine (Cedar, ENFORCE)
+                 │  only allowed calls
+                 ▼
+             AWS Lambda (ClaimsTools: get_policy, get_claim_status, submit_claim)
+
+Runtime, Gateway ──> CloudWatch (traces, logs, metrics)       [Part 1]
+Gateway URL, Runtime ARN ──> AWS Agent Registry (MCP + Custom records)   [Part 3]
 ```
 
-## Getting Started
+## Repository layout
 
-### Prerequisites
-
-- **Node.js** 20.x or later
-- **Python 3.10+** and **uv** for Python agents ([install uv](https://docs.astral.sh/uv/getting-started/installation/))
-- **AWS credentials** configured (`aws configure` or environment variables)
-- **Docker** (only for Container build agents)
-
-### Development
-
-Run your agent locally:
-
-```bash
-agentcore dev
+```
+├── app/
+│   ├── ClaimsAgent/          # Agent code (main.py is the Part 2 version: tools via Gateway)
+│   └── ClaimsTools/          # Lambda with the 3 tools (Part 2)
+├── agentcore/                # AgentCore CLI project config (agentcore.json, aws-targets.json, CDK)
+├── policies/                 # Cedar policies (Part 2), ARNs replaced by placeholders
+├── setup_claims_demo.py      # Part 1: turns a fresh `agentcore create` project into Claims Agent
+├── traffic.py                # Part 1: 10 simulated customers, one session each
+├── setup_policy_demo.py      # Part 2: adds the Lambda target and rewires the agent to the Gateway
+├── make_policies.py          # Part 2: writes the 2 Cedar policies with your Gateway ARN
+├── gateway_test.py           # Part 2: calls the Gateway directly (no model) to show Allow / Deny
+└── registry_demo.py          # Part 3: create registry, publish, search, approve, cleanup
 ```
 
-### Validate Invocation Input
+`agentcore/agentcore.json` is committed in its reset state (all resources removed after the demo). The steps below rebuild everything.
 
-Validate runtime invocation payloads before forwarding them to an agent framework. Keep user prompts typed as strings
-and pass only prompt text to the agent.
+## Prerequisites
 
-### Deployment
+- AWS account with Bedrock model access to Claude Haiku 4.5 in `us-east-1`, and an IAM user with CLI credentials (`aws configure`)
+- Node.js 20+, Python 3.10+, [uv](https://docs.astral.sh/uv/), AWS CLI v2
+- AgentCore CLI **0.31.1** (`npm install -g @aws/agentcore@0.31.1`). Version 1.0.0 changed the command syntax used here.
 
-Deploy to AWS:
+## Run it
 
-```bash
+All commands run from the project root in PowerShell or bash.
+
+### Part 1: Observability
+
+```
+agentcore create --project-name ClaimsDemo --name ClaimsAgent --language Python --framework Strands --model-provider Bedrock --memory none --build CodeZip
+cd ClaimsDemo
+# copy the *.py scripts from this repo into ClaimsDemo
+python setup_claims_demo.py
+agentcore validate
+agentcore deploy
+agentcore invoke --prompt "My car was destroyed in a flood. Please submit a claim of 50000 USD on policy POL-1001."
+uv run --with boto3 traffic.py
+```
+
+Then open **CloudWatch > GenAI Observability > Bedrock AgentCore** (sessions, traces, spans, metrics) and the runtime log group under **Logs**. The first deploy enables CloudWatch Transaction Search; spans can take about 10 minutes to appear the first time.
+
+### Part 2: Policy
+
+```
+agentcore add gateway --name ClaimsGateway --authorizer-type AWS_IAM
+python setup_policy_demo.py
+agentcore add policy-engine --name ClaimsPolicyEngine --attach-to-gateways ClaimsGateway --attach-mode ENFORCE
+agentcore deploy
+uv run --with boto3 gateway_test.py          # default deny: every call is blocked
+
+uv run --with boto3 make_policies.py
+agentcore add policy --name AllowReadTools --engine ClaimsPolicyEngine --source policies/allow_read_tools.cedar
+agentcore add policy --name AllowSmallClaims --engine ClaimsPolicyEngine --source policies/allow_small_claims.cedar
+agentcore deploy
+uv run --with boto3 gateway_test.py          # lookups and 1,500 USD allowed, 50,000 USD denied
+
+agentcore add policy --name NoClaimsOnPol1003 --engine ClaimsPolicyEngine --gateway ClaimsGateway --generate "Never allow submit_claim when policy_id is POL-1003"
+agentcore deploy
+uv run --with boto3 gateway_test.py          # 500 USD on POL-1003 denied: forbid wins
+```
+
+### Part 3: Registry
+
+```
+uv run --with boto3 registry_demo.py create-registry
+uv run --with boto3 registry_demo.py publish
+uv run --with boto3 registry_demo.py search "insurance claim tools"   # 0 results while pending
+uv run --with boto3 registry_demo.py approve
+# wait 2-3 minutes for search to index the approved records
+uv run --with boto3 registry_demo.py search "insurance claim tools"   # 2 results
+```
+
+## Results
+
+| Request | Part 1 (no policy) | Part 2 (Cedar at the Gateway) |
+|---|---|---|
+| Look up POL-1001 | Allowed | Allowed (`AllowReadTools`) |
+| Claim 1,500 USD on POL-1002 | Submitted | Allowed (`AllowSmallClaims`) |
+| Claim 50,000 USD on POL-1001 | **Submitted by the model** | Denied: no policy applies (default deny) |
+| Claim 500 USD on POL-1003 | Rejected by tool code (expired) | Denied: `NoClaimsOnPol1003` (forbid wins) |
+
+## Lessons learned
+
+- **CloudShell is too small** for this stack (CLI about 650 MB plus CDK about 300 MB against a 1 GB limit); run from a local machine.
+- **Pin the AgentCore CLI** to 0.31.1; 1.0.0 changed the syntax.
+- **Agent Registry moved to its own API namespace**: use `agent-registry-control` (admin, publisher) and `agent-registry` (search). The older `bedrock-agentcore-control` registry calls returned `AccessDenied`.
+- **MCP records are schema-validated**: under MCP server schema `2025-12-11` the server `description` is limited to 100 characters.
+- **Registry search is eventually consistent**: newly approved records take a few minutes to show up.
+- With the CLI 0.31.1, `agentcore deploy` refuses an empty project after `agentcore remove all`; delete the CloudFormation stack from the console if it remains.
+
+## Cleanup
+
+```
+uv run --with boto3 registry_demo.py cleanup
+agentcore remove all
 agentcore deploy
 ```
 
-## Commands
+If the stack is still listed in CloudFormation, delete it there. Then delete the CloudWatch log groups created by the demo and deactivate the IAM access key.
 
-| Command | Description |
-| --- | --- |
-| `agentcore create` | Create a new AgentCore project |
-| `agentcore add` | Add resources (agent, memory, credential, gateway, evaluator, policy) |
-| `agentcore remove` | Remove resources |
-| `agentcore dev` | Run agent locally with hot-reload |
-| `agentcore deploy` | Deploy to AWS via CDK |
-| `agentcore status` | Show deployment status |
-| `agentcore invoke` | Invoke agent (local or deployed) |
-| `agentcore logs` | View agent logs |
-| `agentcore traces` | View agent traces |
-| `agentcore eval` | Run evaluations |
-| `agentcore package` | Package agent artifacts |
-| `agentcore validate` | Validate configuration |
-| `agentcore pause` | Pause a deployed agent |
-| `agentcore resume` | Resume a paused agent |
-| `agentcore fetch` | Fetch remote resource definitions |
-| `agentcore import` | Import existing resources |
-| `agentcore update` | Check for CLI updates |
+## References
 
-## Configuration
-
-Edit the JSON files in `agentcore/` to configure your project. See `agentcore/.llm-context/` for type definitions and validation constraints.
-
-The project uses a **flat resource model** — agents, memories, credentials, gateways, evaluators, and policies are top-level arrays in `agentcore.json`. Resources are independent; agents discover memories and credentials at runtime via environment variables or SDK calls.
-
-## Resources
-
-| Resource | Purpose |
-| --- | --- |
-| Agent (runtime) | HTTP, MCP, or A2A agent deployed to AgentCore Runtime |
-| Memory | Persistent context storage with configurable strategies |
-| Credential | API key or OAuth credential providers |
-| Gateway | MCP gateway that routes tool calls to targets |
-| Gateway Target | Tool implementation (Lambda, MCP server, OpenAPI, Smithy, API Gateway) |
-| Evaluator | Custom LLM-as-a-Judge or code-based evaluation |
-| Online Eval Config | Continuous evaluation pipeline for deployed agents |
-| Policy | Cedar authorization policies for gateway tools |
-
-### Agent Types
-
-- **Template agents**: Created from framework templates (Strands, LangChain/LangGraph, GoogleADK, OpenAI Agents, Autogen)
-- **BYO agents**: Bring your own code with `agentcore add agent --type byo`
-- **Import agents**: Import existing Bedrock agents with `agentcore import`
-
-### Build Types
-
-- **CodeZip**: Python source packaged as a zip and deployed directly to AgentCore Runtime
-- **Container**: Docker image built via CodeBuild (ARM64), pushed to ECR, and deployed to AgentCore Runtime
-
-## Documentation
-
+- [Amazon Bedrock AgentCore developer guide](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/)
+- [Policy in Amazon Bedrock AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy.html)
+- [Get started with AWS Agent Registry](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/registry-get-started.html)
 - [AgentCore CLI](https://github.com/aws/agentcore-cli)
-- [AgentCore CDK Constructs](https://github.com/aws/agentcore-l3-cdk-constructs)
-- [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/)

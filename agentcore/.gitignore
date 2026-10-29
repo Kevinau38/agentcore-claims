@@ -5,11 +5,8 @@
 cdk/cdk.out/
 cdk/node_modules/
 
-# CLI Internals
-.cli/*
+# CLI Internals (deployed-state.json holds account-specific ARNs, keep it out of the public repo)
+.cli/
 
 # Ephemeral Staging
 .cache/*
-
-# Exception: Commit the State
-!.cli/deployed-state.json
