@@ -17,20 +17,11 @@ A hands-on demo of three Amazon Bedrock AgentCore capabilities that I, **Trần 
 - Three tools on mock data: `get_policy`, `get_claim_status`, `submit_claim`.
 - Mock policies: `POL-1001` (auto, limit 5,000 USD), `POL-1002` (home, 20,000 USD), `POL-1003` (expired).
 
-## Architecture (after Part 2)
+## Architecture
 
-```
-Customer ──> AgentCore Runtime (Claims Agent, Strands + Claude Haiku 4.5)
-                 │  MCP, SigV4
-                 ▼
-             AgentCore Gateway (ClaimsGateway) ── Policy Engine (Cedar, ENFORCE)
-                 │  only allowed calls
-                 ▼
-             AWS Lambda (ClaimsTools: get_policy, get_claim_status, submit_claim)
+![Architecture: Claims Agent on AgentCore Runtime, Gateway with Policy Engine, Lambda tools, CloudWatch and Agent Registry](docs/images/architecture.png)
 
-Runtime, Gateway ──> CloudWatch (traces, logs, metrics)                   [Part 1]
-Gateway URL, Runtime ARN ──> AWS Agent Registry (MCP + Custom records)   [Part 3]
-```
+The customer calls the Claims Agent on AgentCore Runtime, which invokes Claude Haiku 4.5 on Amazon Bedrock. Every tool call goes through AgentCore Gateway over MCP with SigV4; the Gateway asks the Policy Engine (Cedar, ENFORCE) to authorize it, and only allowed calls reach the ClaimsTools Lambda. Runtime and Gateway send telemetry to CloudWatch (Part 1), and the Gateway URL and Runtime ARN are published to AWS Agent Registry (Part 3).
 
 ## Results
 
@@ -99,7 +90,7 @@ Not approved, not discoverable. Approved, the whole organization can find it.
 │   ├── ClaimsAgent/          # Agent code (main.py is the Part 2 version: tools via Gateway)
 │   └── ClaimsTools/          # Lambda with the 3 tools (Part 2)
 ├── agentcore/                # AgentCore CLI project config (agentcore.json, aws-targets.json, CDK)
-├── docs/images/              # Screenshots used in this README
+├── docs/images/              # Architecture diagram and screenshots used in this README
 ├── policies/                 # Cedar policies (Part 2), ARNs replaced by placeholders
 ├── setup_claims_demo.py      # Part 1: turns a fresh `agentcore create` project into Claims Agent
 ├── traffic.py                # Part 1: 10 simulated customers, one session each
@@ -212,7 +203,11 @@ Demo thực hành 3 tính năng của Amazon Bedrock AgentCore do mình, **Trầ
 - Ba tool trên dữ liệu giả lập: `get_policy` (tra hợp đồng), `get_claim_status` (xem trạng thái hồ sơ), `submit_claim` (nộp yêu cầu bồi thường).
 - Hợp đồng mẫu: `POL-1001` (xe, hạn mức 5.000 USD), `POL-1002` (nhà, 20.000 USD), `POL-1003` (đã hết hạn).
 
-Sơ đồ kiến trúc giống phần tiếng Anh ở trên.
+### Kiến trúc
+
+![Kiến trúc demo](docs/images/architecture.png)
+
+Khách hàng gọi Claims Agent trên AgentCore Runtime, agent gọi model Claude Haiku 4.5 trên Amazon Bedrock. Mọi lần gọi tool đều đi qua AgentCore Gateway bằng MCP, xác thực SigV4; Gateway hỏi Policy Engine (Cedar, ENFORCE) trước, chỉ những lần gọi được cho phép mới tới Lambda ClaimsTools. Runtime và Gateway gửi dữ liệu theo dõi sang CloudWatch (phần 1), còn URL của Gateway và ARN của Runtime được đăng ký vào AWS Agent Registry (phần 3).
 
 ### Kết quả
 
@@ -238,7 +233,7 @@ Rule `forbid` được sinh từ đúng một câu tiếng Anh: `agentcore add p
 | `app/ClaimsAgent/` | Code agent (`main.py` là bản phần 2: gọi tool qua Gateway) |
 | `app/ClaimsTools/` | Lambda chứa 3 tool (phần 2) |
 | `agentcore/` | Cấu hình project của AgentCore CLI (`agentcore.json`, `aws-targets.json`, CDK) |
-| `docs/images/` | Ảnh chụp dùng trong README |
+| `docs/images/` | Sơ đồ kiến trúc và ảnh chụp dùng trong README |
 | `policies/` | Cedar policy (phần 2), ARN đã thay bằng chỗ giữ chỗ |
 | `setup_claims_demo.py` | Phần 1: biến project vừa tạo bằng `agentcore create` thành Claims Agent |
 | `traffic.py` | Phần 1: 10 khách hàng giả lập, mỗi người một session |
